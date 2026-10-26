@@ -1,0 +1,19 @@
+[env]
+TPU_SDK_DIR = "../tpu-sdk-sg200x"
+
+# クロスツールチェーンの bin ディレクトリを PATH に自動追加
+PATH = { value = "../host-tools/gcc/riscv64-linux-musl-x86_64/bin", relative = false }
+
+CC_riscv64gc_unknown_linux_musl = "../host-tools/gcc/riscv64-linux-musl-x86_64/bin/riscv64-unknown-linux-musl-gcc"
+
+[target.riscv64gc-unknown-linux-musl]
+linker = "../host-tools/gcc/riscv64-linux-musl-x86_64/bin/riscv64-unknown-linux-musl-gcc"
+
+rustflags = [
+    "-C", "link-self-contained=no",     # ← 【重要】Rust同梱の静的muslを無効化
+    "-C", "target-feature=-crt-static",  # ← 【重要】動的リンクを明示
+    # GCC に自前の ld (rust-lld) を優先的に使わせる設定
+    "-C", "link-arg=-B../tpu_matmul/.cargo/bin",
+    "-C", "link-arg=-L../tpu-sdk-sg200x/lib",
+    "-C", "link-arg=-Wl,-rpath,$ORIGIN"
+]

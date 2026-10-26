@@ -1,0 +1,28 @@
+# ===== 外部ツールチェーン・SDK (make deps / make cvimodel で自動取得) =====
+/host-tools/
+/tpu-sdk-sg200x/
+/tpu-mlir/
+*.tar
+*.tar.gz
+
+# ===== TPU-MLIR / ONNX ビルド成果物 =====
+/build_matmul/
+*.onnx
+*.mlir
+*.cvimodel
+*.npz
+*_cali_table
+*_weight_map.csv
+
+# ===== Rust (Cargo) ビルド成果物・環境依存ラッパー =====
+target/
+**/target/
+tpu_matmul/.cargo/bin/ld
+
+# ===== Python / uv キャッシュ =====
+__pycache__/
+*.py[cod]
+.venv/
+/tpu_env/
+
+
