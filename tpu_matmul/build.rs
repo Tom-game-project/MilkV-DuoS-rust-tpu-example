@@ -68,4 +68,6 @@ fn main() {
     // println!("cargo:rustc-link-lib=static=cvimath-static");
     // println!("cargo:rustc-link-lib=stdc++");
 
+    println!("cargo:rerun-if-env-changed=TPU_SDK_DIR");
+    println!("cargo:rerun-if-changed=build.rs");
 }
