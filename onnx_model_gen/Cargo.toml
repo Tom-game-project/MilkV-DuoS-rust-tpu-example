@@ -1,0 +1,7 @@
+[package]
+name = "onnx_model_gen"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+protobuf-shape-guard = { path = "../protobuf-shape-guard" }

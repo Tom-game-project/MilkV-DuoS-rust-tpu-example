@@ -1,7 +1,8 @@
 # Milk-V Duo S (SG2000 / cv181x) TPU 行列演算ビルドパイプライン
 # ディレクトリ構成:
 #   ./Makefile               (このファイル)
-#   ./generate_matmul_onnx.py (uv 用 ONNX モデル生成スクリプト)
+#   ./protobuf-shape-guard/  (行列演算モデルを構成する型安全 ONNX ライブラリ)
+#   ./onnx_model_gen/        (protobuf-shape-guard を利用して ONNX モデルを出力するプロジェクト)
 #   ./host-tools/            (RISC-V musl クロスコンパイルツールチェーン)
 #   ./tpu-sdk-sg200x/        (SG200X 用 TPU ランタイム SDK)
 #   ./tpu-mlir/              (Docker 内で使用する TPU-MLIR リポジトリ)
@@ -22,6 +23,8 @@ HOST_TOOLS_DIR    := $(ROOT_DIR)/host-tools
 GCC_BIN           := $(HOST_TOOLS_DIR)/gcc/riscv64-linux-musl-x86_64/bin/riscv64-unknown-linux-musl-gcc
 TPU_SDK_DIR       := $(ROOT_DIR)/tpu-sdk-sg200x
 TPU_MLIR_DIR      := $(ROOT_DIR)/tpu-mlir
+SHAPE_GUARD_DIR   := $(ROOT_DIR)/protobuf-shape-guard
+ONNX_GEN_DIR      := $(ROOT_DIR)/onnx_model_gen
 RUST_DIR          := $(ROOT_DIR)/tpu_matmul
 MODEL_BUILD_DIR   := $(ROOT_DIR)/build_matmul
 
@@ -30,9 +33,7 @@ HOST_UID          := $(shell id -u)
 HOST_GID          := $(shell id -g)
 
 # 成果物ファイル
-ONNX_SCRIPT       := $(ROOT_DIR)/generate_matmul_onnx.py
 ONNX_FILE         := $(ROOT_DIR)/matmul_add.onnx
-INPUT_NPZ         := $(ROOT_DIR)/matmul_in.npz
 CVIMODEL_FILE     := $(MODEL_BUILD_DIR)/matmul_add_bf16.cvimodel
 RUST_BIN          := $(RUST_DIR)/target/$(RUST_TARGET)/release/tpu_matmul
 
@@ -55,7 +56,7 @@ help:
 	@echo "使い方:"
 	@echo "  make all                   : ツールチェーン取得・cvimodel変換・Rustバイナリ生成を一括実行"
 	@echo "  make deps                  : host-tools, tpu-sdk-sg200x, rust target のインストール"
-	@echo "  make onnx                  : uv run で ONNX モデルとテスト入力 (.npz) を生成"
+	@echo "  make onnx                  : onnx_model_gen (protobuf-shape-guard) で ONNX モデルを生成"
 	@echo "  make cvimodel              : Docker (sophgo/tpuc_dev) で ONNX から .cvimodel をコンパイル"
 	@echo "  make rust                  : tpu_matmul の Rust クロスコンパイルを実行"
 	@echo "  make deploy DUO_IP=&lt;IP&gt;    : 生成したバイナリと .cvimodel を Milk-V Duo S へ scp 転送"
@@ -80,19 +81,19 @@ $(TPU_MLIR_DIR)/envsetup.sh:
 	@echo "[2/4] tpu-mlir をクローンしています..."
 	git clone --depth 1 $(TPU_MLIR_REPO) $(TPU_MLIR_DIR)
 
-# ===== 2. ONNX モデルとテスト入力 (.npz) の生成 (uv 使用) =====
-onnx: $(ONNX_FILE) $(INPUT_NPZ)
+# ===== 2. ONNX モデルの生成 (onnx_model_gen / protobuf-shape-guard 使用) =====
+onnx: $(ONNX_FILE)
 
-$(ONNX_FILE) $(INPUT_NPZ): $(ONNX_SCRIPT)
-	@echo "[2/4] uv で ONNX モデル (matmul_add.onnx) と入力データ (matmul_in.npz) を生成しています..."
-	uv run $(ONNX_SCRIPT)
+$(ONNX_FILE): $(ONNX_GEN_DIR)/Cargo.toml $(ONNX_GEN_DIR)/src/main.rs $(SHAPE_GUARD_DIR)/Cargo.toml $(SHAPE_GUARD_DIR)/src/lib.rs
+	@echo "[2/4] onnx_model_gen で ONNX モデル (matmul_add.onnx) を生成しています..."
+	cd $(ONNX_GEN_DIR) && cargo run --release -- "$(ONNX_FILE)"
 
 # ===== 3. TPU-MLIR コンテナによる .cvimodel のコンパイル =====
 #   - PYTHONDONTWRITEBYTECODE=1 で tpu-mlir 内に root 所有の __pycache__ が作られるのを防止
 #   - 終了時 (trap EXIT) に build_matmul の所有権を現在のユーザー (HOST_UID:HOST_GID) に戻す
 cvimodel: $(CVIMODEL_FILE)
 
-$(CVIMODEL_FILE): $(ONNX_FILE) $(INPUT_NPZ) $(TPU_MLIR_DIR)/envsetup.sh
+$(CVIMODEL_FILE): $(ONNX_FILE) $(TPU_MLIR_DIR)/envsetup.sh
 	@echo "[3/4] Docker ($(DOCKER_IMAGE)) 内で .cvimodel をコンパイルしています..."
 	mkdir -p $(MODEL_BUILD_DIR)
 	docker run --rm --privileged \
@@ -107,15 +108,11 @@ $(CVIMODEL_FILE): $(ONNX_FILE) $(INPUT_NPZ) $(TPU_MLIR_DIR)/envsetup.sh
 				--model_name matmul_add \
 				--model_def ../matmul_add.onnx \
 				--input_shapes [[1,4]] \
-				--test_input ../matmul_in.npz \
-				--test_result matmul_top_outputs.npz \
 				--mlir matmul_add.mlir && \
 			model_deploy.py \
 				--mlir matmul_add.mlir \
 				--quantize BF16 \
 				--chip cv181x \
-				--test_input ../matmul_in.npz \
-				--test_reference matmul_top_outputs.npz \
 				--model matmul_add_bf16.cvimodel \
 		"
 
@@ -141,9 +138,10 @@ deploy: $(RUST_BIN) $(CVIMODEL_FILE)
 # 万が一コンテナが root 所有で作ったファイルが残っていても、sudo を使わずに処理できるよう
 # 軽量コンテナまたは通常の rm -rf で削除する
 clean:
-	rm -rf $(MODEL_BUILD_DIR) $(ONNX_FILE) $(INPUT_NPZ) 2>/dev/null || \
+	rm -rf $(MODEL_BUILD_DIR) $(ONNX_FILE) 2>/dev/null || \
 		docker run --rm -v "$(ROOT_DIR):/workspace" $(DOCKER_IMAGE) rm -rf /workspace/build_matmul
 	cd $(RUST_DIR) && cargo clean
+	if [ -d "$(ONNX_GEN_DIR)" ]; then cd $(ONNX_GEN_DIR) && cargo clean; fi
 
 clean-all: clean
 	rm -rf $(HOST_TOOLS_DIR) $(TPU_SDK_DIR) $(TPU_MLIR_DIR) host-tools.tar.gz 2>/dev/null || \
