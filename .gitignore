@@ -25,4 +25,6 @@ __pycache__/
 .venv/
 /tpu_env/
 
+# ===== Vim Editor =====
+.vim/
 

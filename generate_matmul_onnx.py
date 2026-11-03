@@ -102,6 +102,88 @@ def main() -> None:
     print(f"Input X               : {x_test.tolist()}")
     print(f"Expected Output Y     : {y_expected.tolist()}")
 
+# def my_calc00() -> None:
+#     # 1. 目で見て暗算できる 4x4 の定数重み行列 W とバイアス B を定義
+#     #    W: 対角成分を 1, 2, 3, 4 としたスケーリング行列 (計算結果が一目でわかる構成)
+#     w_data = np.array(
+#         [
+#             [1.0, 2.0],
+#             [3.0, 4.0],
+#             [5.0, 6.0],
+#         ],
+#         dtype=np.float32,
+#     )
+# 
+#     #    B: 各列に 10, 20, 30, 40 を加算するバイアス
+#     b_data = np.array([10.0, 20.0, 30.0], dtype=np.float32)
+# 
+#     # 2. ONNX の入出力テンソル型定義 (固定形状: [1, 4])
+#     x_info = helper.make_tensor_value_info("X", TensorProto.FLOAT, [2, 3])
+#     y_info = helper.make_tensor_value_info("Y", TensorProto.FLOAT, [3, 3])
+# 
+#     # 3. 定数パラメータ (Initializer) の作成
+#     w_init = helper.make_tensor(
+#         name="W",
+#         data_type=TensorProto.FLOAT,
+#         dims=w_data.shape,
+#         vals=w_data.flatten().tolist(),
+#     )
+#     b_init = helper.make_tensor(
+#         name="B",
+#         data_type=TensorProto.FLOAT,
+#         dims=b_data.shape,
+#         vals=b_data.flatten().tolist(),
+#     )
+# 
+#     # 4. 演算ノードの定義: Y = (X @ W) + B
+#     matmul_node = helper.make_node(
+#         "MatMul",
+#         inputs=["X", "W"],
+#         outputs=["XW"],
+#         name="MatMul_Node",
+#     )
+#     add_node = helper.make_node(
+#         "Add",
+#         inputs=["XW", "B"],
+#         outputs=["Y"],
+#         name="Add_Node",
+#     )
+# 
+#     # 5. グラフとモデルの作成 (Opset 13)
+#     graph = helper.make_graph(
+#         nodes=[matmul_node, add_node],
+#         name="SimpleMatMulAddGraph",
+#         inputs=[x_info],
+#         outputs=[y_info],
+#         initializer=[w_init, b_init],
+#     )
+#     model = helper.make_model(
+#         graph,
+#         producer_name="milkv-duos-matmul-demo",
+#         opset_imports=[helper.make_opsetid("", 13)],
+#     )
+#     model.ir_version = 8
+# 
+#     onnx.checker.check_model(model)
+#     onnx_path = "matmul_add2.onnx"
+#     onnx.save(model, onnx_path)
+# 
+#     # 6. TPU-MLIR の検証ゲートおよび実機テスト用の入力データ (.npz) を作成
+#     x_test = np.array(
+#         [[1.0, 2.0, 3.0],[4.0, 5.0, 6.0]],
+#         dtype=np.float32
+#     )
+#     y_expected = w_data @ x_test + b_data
+# 
+#     npz_path = "matmul_in2.npz"
+#     np.savez(npz_path, X=x_test)
+# 
+#     print(f"[OK] Saved ONNX model : {onnx_path}")
+#     print(f"[OK] Saved test input : {npz_path}")
+#     print(f"Input X               : {x_test.tolist()}")
+#     print(f"Expected Output Y     : {y_expected.tolist()}")
 
 if __name__ == "__main__":
     main()
+    # my_calc00()
+

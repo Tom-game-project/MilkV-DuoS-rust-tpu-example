@@ -22,6 +22,11 @@ mod ffi {
             model_file: *const c_char,
             model: *mut CviModelHandle,
         ) -> c_int;
+        pub fn rust_cvi_nn_register_model_from_buffer(
+            buf: *const i8,
+            size: u32,
+            model: *mut CviModelHandle,
+        ) -> c_int;
         pub fn rust_cvi_nn_get_input_output_tensors(
             model: CviModelHandle,
             inputs: *mut *mut CviTensor,
@@ -89,7 +94,7 @@ impl fmt::Display for CviError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::RegisterFailed(code) => {
-                write!(f, "Failed to register model from path (code: {:#x})", code)
+                write!(f, "Failed to register model (code: {:#x})", code)
             }
             Self::GetTensorsFailed(code) => {
                 write!(f, "Failed to query input/output tensors (code: {:#x})", code)
@@ -131,25 +136,8 @@ pub struct Model {
 }
 
 impl Model {
-    /// `.cvimodel` をロードして ION メモリに初期化する
-    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, CviError> {
-        #[cfg(unix)]
-        let c_path = {
-            use std::os::unix::ffi::OsStrExt;
-            std::ffi::CString::new(path.as_ref().as_os_str().as_bytes())
-                .map_err(|_| CviError::InvalidPath)?
-        };
-        #[cfg(not(unix))]
-        let c_path = {
-            let path_str = path.as_ref().to_str().ok_or(CviError::InvalidPath)?;
-            std::ffi::CString::new(path_str).map_err(|_| CviError::InvalidPath)?
-        };
-
-        let mut raw_handle: ffi::CviModelHandle = ptr::null_mut();
-        let ret = unsafe { ffi::rust_cvi_nn_register_model(c_path.as_ptr(), &mut raw_handle) };
-        if ret != 0 {
-            return Err(CviError::RegisterFailed(ret));
-        }
+    /// 登録済みハンドルから入出力テンソルを取得して `Model` を構築する内部ヘルパー
+    fn from_raw_handle(raw_handle: ffi::CviModelHandle) -> Result<Self, CviError> {
         let handle = NonNull::new(raw_handle).ok_or(CviError::RegisterFailed(-1))?;
 
         let mut inputs_raw = ptr::null_mut();
@@ -181,6 +169,46 @@ impl Model {
         })
     }
 
+    /// `.cvimodel` ファイルパスからロードして ION メモリに初期化する
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, CviError> {
+        #[cfg(unix)]
+        let c_path = {
+            use std::os::unix::ffi::OsStrExt;
+            std::ffi::CString::new(path.as_ref().as_os_str().as_bytes())
+                .map_err(|_| CviError::InvalidPath)?
+        };
+        #[cfg(not(unix))]
+        let c_path = {
+            let path_str = path.as_ref().to_str().ok_or(CviError::InvalidPath)?;
+            std::ffi::CString::new(path_str).map_err(|_| CviError::InvalidPath)?
+        };
+
+        let mut raw_handle: ffi::CviModelHandle = ptr::null_mut();
+        let ret = unsafe { ffi::rust_cvi_nn_register_model(c_path.as_ptr(), &mut raw_handle) };
+        if ret != 0 {
+            return Err(CviError::RegisterFailed(ret));
+        }
+        Self::from_raw_handle(raw_handle)
+    }
+
+    /// バイナリに埋め込んだ `.cvimodel` バイト列 (`include_bytes!`) から直接ロードする
+    /// （外部の `.cvimodel` ファイルが一切不要な完全単体バイナリを実現できる）
+    pub fn load_from_bytes(bytes: &'static [u8]) -> Result<Self, CviError> {
+        let size = u32::try_from(bytes.len()).map_err(|_| CviError::RegisterFailed(-1))?;
+        let mut raw_handle: ffi::CviModelHandle = ptr::null_mut();
+        let ret = unsafe {
+            ffi::rust_cvi_nn_register_model_from_buffer(
+                bytes.as_ptr() as *const i8,
+                size,
+                &mut raw_handle,
+            )
+        };
+        if ret != 0 {
+            return Err(CviError::RegisterFailed(ret));
+        }
+        Self::from_raw_handle(raw_handle)
+    }
+
     /// 入力テンソルの数
     pub fn input_count(&self) -> usize {
         self.input_num.max(0) as usize
@@ -192,7 +220,6 @@ impl Model {
     }
 
     /// 指定インデックスの入力テンソル（可変ビュー）を取得する
-    /// `&mut self` を借用するため、スライス保持中に `forward()` や二重借用が起きるのをコンパイル時に防ぐ
     pub fn input_mut(&mut self, index: usize) -> Result<TensorMut<'_>, CviError> {
         let len = self.input_count();
         if index >= len {
@@ -206,7 +233,6 @@ impl Model {
     }
 
     /// 指定インデックスの出力テンソル（不変ビュー）を取得する
-    /// `&self` を借用するため、出力スライスを参照している間は `forward()` による上書きをコンパイル時に防ぐ
     pub fn output(&self, index: usize) -> Result<TensorRef<'_>, CviError> {
         let len = self.output_count();
         if index >= len {
